@@ -1,0 +1,37 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+local.properties
+
+# Compiled / generated artifacts (should never appear at repo root)
+*.class
+*.kotlin_module
+androidx/
+META-INF/
+
+# Build outputs
+app/build/
+/build/
+
+# Keystore files — never commit signing keys
+*.jks
+*.keystore
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Kotlin compiler error logs
+.kotlin/
+
+# Editor / IDE specific — use project-level settings files only if needed
+.vscode/
+
+# Editor temp files
+*.swp
+*~

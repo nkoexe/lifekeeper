@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme required by the manifest; Compose takes over at runtime.
+         Setting windowBackground transparent eliminates the pre-Compose white flash
+         that can appear during cold-start. Compose's NavHost and Scaffold paint
+         their own opaque background over this transparent window. -->
+    <style name="Theme.Lifekeeper" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
+    <color name="ic_launcher_background">#6750A4</color>
+</resources>

@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">Lifekeeper</string>
+    <string name="nav_modes">Modes</string>
+    <string name="nav_summary">Summary</string>
+    <string name="nav_edit">Edit Modes</string>
+    <string name="add_mode">Add mode</string>
+    <string name="delete_mode">Delete mode</string>
+    <string name="mode_name_hint">Mode name</string>
+    <string name="total_tracked">Total tracked</string>
+    <string name="today">Today</string>
+    <string name="active">Active</string>
+    <string name="widget_description">Shows the active mode and today&#8217;s time per mode</string>
+    <string name="focus_widget_description">Active mode focus widget</string>
+    <!-- Content descriptions for accessibility -->
+    <string name="cd_edit_modes">Edit modes</string>
+    <string name="cd_back">Back</string>
+    <string name="cd_reorder">Reorder</string>
+</resources>

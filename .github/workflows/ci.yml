@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+
+# Cancel any in-progress run for the same branch/PR to avoid queuing.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimum permissions; add `contents: write` only in the release workflow.
+permissions:
+  contents: read
+
+jobs:
+  build-debug:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Eclipse Temurin is the de-facto standard OpenJDK distribution for CI.
+      # `cache: gradle` caches ~/.gradle/caches and ~/.gradle/wrapper automatically.
+      - name: Set up Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      # ubuntu-latest ships Android SDK tools but not every platform.
+      # compileSdk 36 must be present; this is a no-op if already installed.
+      - name: Install Android SDK platform 36
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # gradle.properties contains org.gradle.java.home pointing at a local path
+      # that does not exist on the runner. Override it via -D so the workflow
+      # always uses the JDK installed by setup-java above.
+      - name: Build debug APK
+        run: |
+          ./gradlew :app:assembleDebug \
+            -Dorg.gradle.java.home="$JAVA_HOME" \
+            --no-daemon \
+            --stacktrace
+        env:
+          # Expose CI=true so build scripts can detect the environment if needed.
+          CI: true
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          # Keep debug artifacts for 14 days (adjust to taste).
+          retention-days: 14
+          if-no-files-found: error

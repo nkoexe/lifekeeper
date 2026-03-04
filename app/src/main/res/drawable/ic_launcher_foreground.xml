@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple clock-face icon representing time tracking -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,18a36,36 0 1,0 0,72 36,36 0 1,0 0,-72z" />
+    <path
+        android:strokeColor="#6750A4"
+        android:strokeWidth="3"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M54,36 L54,54 L66,60" />
+</vector>

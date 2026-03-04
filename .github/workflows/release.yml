@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'   # triggers on v0.1.0, v1.2.3, etc.
+
+# Cancel any in-progress release for the same tag (e.g. force-pushed tag).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+# `contents: write` is required to create a GitHub Release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build & publish release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Install Android SDK platform 36
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # Decode the release keystore stored as a base64 GitHub Secret.
+      # To create the secret:
+      #   base64 -i release.keystore | pbcopy   # macOS
+      #   base64 -w 0 release.keystore           # Linux
+      # Then add the result as KEYSTORE_BASE64 in Settings > Secrets.
+      - name: Decode release keystore
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > $RUNNER_TEMP/release.keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Build release APK
+        run: |
+          ./gradlew :app:assembleRelease \
+            -Dorg.gradle.java.home="$JAVA_HOME" \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.keystore" \
+            -Pandroid.injected.signing.store.password="${{ secrets.KEYSTORE_PASSWORD }}" \
+            -Pandroid.injected.signing.key.alias="${{ secrets.KEY_ALIAS }}" \
+            -Pandroid.injected.signing.key.password="${{ secrets.KEY_PASSWORD }}" \
+            --no-daemon \
+            --stacktrace
+        env:
+          CI: true
+
+      # Rename to include the version tag for clarity.
+      - name: Rename APK
+        run: |
+          mv app/build/outputs/apk/release/app-release.apk \
+             app/build/outputs/apk/release/lifekeeper-${{ github.ref_name }}.apk
+
+      - name: Upload release APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-${{ github.ref_name }}
+          path: app/build/outputs/apk/release/lifekeeper-${{ github.ref_name }}.apk
+          retention-days: 90
+          if-no-files-found: error
+
+      # Creates a GitHub Release and attaches the APK to it.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Lifekeeper ${{ github.ref_name }}"
+          files: app/build/outputs/apk/release/lifekeeper-${{ github.ref_name }}.apk
+          generate_release_notes: true   # auto-generates changelog from merged PRs
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}  # e.g. v1.0.0-beta → pre-release
