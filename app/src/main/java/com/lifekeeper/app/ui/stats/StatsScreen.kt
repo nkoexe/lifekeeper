@@ -62,10 +62,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -327,8 +332,10 @@ private val EmphasizedAccelerate = CubicBezierEasing(0.3f, 0.0f, 0.8f, 0.15f)
 
 // ── Donut chart ───────────────────────────────────────────────────────────────
 
-private const val DONUT_STROKE_DP = 28f
-private const val DONUT_GAP_DEG   = 2f
+private const val DONUT_STROKE_DP        = 22f
+private const val DONUT_GAP_DEG          = 6f
+/** Modes with less tracked time than this are hidden from the ring (too thin to draw). */
+private const val MIN_DONUT_SEGMENT_MS   = 10L * 60_000L  // 10 minutes
 
 /**
  * An animated ring/donut chart.
@@ -347,8 +354,15 @@ private fun DonutChart(
     modifier      : Modifier = Modifier,
 ) {
     val animProgress = remember { Animatable(0f) }
-    // Key on mode IDs only — duration ticks must not restart the draw-in animation.
-    val modeIds = modeSummaries.map { it.modeId }
+    // Filter out modes too short to draw meaningfully; proportions are computed
+    // only from the visible set so the ring always fills completely.
+    val visibleSummaries = remember(modeSummaries) {
+        modeSummaries.filter { it.totalMs >= MIN_DONUT_SEGMENT_MS }
+    }
+    val visibleTotalMs = visibleSummaries.sumOf { it.totalMs }.coerceAtLeast(1L)
+
+    // Key on visible mode IDs only — duration ticks must not restart the draw-in animation.
+    val modeIds = visibleSummaries.map { it.modeId }
     LaunchedEffect(modeIds) {
         animProgress.snapTo(0f)
         // EmphasizedDecelerate: fast start, decelerates smoothly into the end position.
@@ -362,14 +376,12 @@ private fun DonutChart(
 
     val motionScheme = MaterialTheme.motionScheme
     val density = LocalDensity.current
-    val strokeDp = DONUT_STROKE_DP.dp
-    val strokePx = with(density) { strokeDp.toPx() }
+    val strokePx          = with(density) { DONUT_STROKE_DP.dp.toPx() }
     val highlightStrokePx = strokePx * 1.3f
 
-    val n = modeSummaries.size
+    val n = visibleSummaries.size
 
-    // Per-segment spring-animated alpha and stroke width.
-    // Recreated when the segment set changes (modeIds key), stable between ticks.
+    // Per-segment animated alpha and stroke — sized to the visible set.
     val segmentAlphas  = remember(modeIds) { List(n) { Animatable(1f) } }
     val segmentStrokes = remember(modeIds) { List(n) { Animatable(strokePx) } }
 
@@ -397,16 +409,18 @@ private fun DonutChart(
         }
     }
 
-    // Pre-compute segment angles (0f = top, clockwise) so tap hit-test matches draw.
+    // Pre-compute segment angles from the visible set so proportions reflect
+    // actual tracked time, ignoring any modes that were filtered out.
+    // Gaps come purely from DONUT_GAP_DEG; cap inset is handled in DrawScope.
     val totalSweepable = 360f - if (n > 1) DONUT_GAP_DEG * n else 0f
-    val segmentSweeps: List<Float> = modeSummaries.map { s ->
-        if (totalMs > 0L) (s.totalMs.toFloat() / totalMs) * totalSweepable else 0f
+    val segmentSweeps = visibleSummaries.map { s ->
+        (s.totalMs.toFloat() / visibleTotalMs) * totalSweepable
     }
-    val segmentStarts: List<Float> = buildList {
-        var cursor = -90f  // Start at 12 o'clock
-        segmentSweeps.forEachIndexed { i, sweep ->
+    val segmentStarts = buildList<Float> {
+        var cursor = -90f  // 12 o'clock
+        for (i in segmentSweeps.indices) {
             add(cursor)
-            cursor += sweep + if (n > 1) DONUT_GAP_DEG else 0f
+            cursor += segmentSweeps[i] + if (n > 1) DONUT_GAP_DEG else 0f
         }
     }
 
@@ -466,8 +480,8 @@ private fun DonutChart(
 
             val progress = animProgress.value
 
-            if (totalMs == 0L || modeSummaries.isEmpty()) {
-                // No data — draw centered text.
+            if (totalMs == 0L || visibleSummaries.isEmpty()) {
+                // No data (or all modes below threshold) — draw neutral ring + label.
                 drawIntoCanvas { canvas ->
                     val paint = android.graphics.Paint().apply {
                         color       = onSurfaceColor.copy(alpha = 0.5f).toArgb()
@@ -481,20 +495,31 @@ private fun DonutChart(
                 return@Canvas
             }
 
-            // Draw each segment using its individually spring-animated alpha and stroke.
-            modeSummaries.forEachIndexed { i, summary ->
+            // Each arc is inset by the angular width of one round cap so the semicircular
+            // ends land exactly at the gap boundaries — not overlapping the next segment.
+            // capInsetDeg must be computed here where outerR (in px) is known.
+            // Single-segment rings have no gap, so no inset is needed.
+            val capInsetDeg = if (n > 1)
+                Math.toDegrees(atan2(strokePx / 2.0, outerR.toDouble())).toFloat()
+            else 0f
+
+            visibleSummaries.forEachIndexed { i, summary ->
                 val color = runCatching {
                     Color(android.graphics.Color.parseColor(summary.colorHex))
                 }.getOrDefault(Color.Gray)
 
+                val drawnSweep = (segmentSweeps[i] * progress - 2f * capInsetDeg)
+                    .coerceAtLeast(0f)
+                if (drawnSweep == 0f) return@forEachIndexed
+
                 drawArc(
                     color      = color.copy(alpha = segmentAlphas[i].value),
-                    startAngle = segmentStarts[i],
-                    sweepAngle = segmentSweeps[i] * progress,
+                    startAngle = segmentStarts[i] + capInsetDeg,
+                    sweepAngle = drawnSweep,
                     useCenter  = false,
                     topLeft    = topLeft,
                     size       = arcSize,
-                    style      = Stroke(width = segmentStrokes[i].value, cap = StrokeCap.Butt),
+                    style      = Stroke(width = segmentStrokes[i].value, cap = StrokeCap.Round),
                 )
             }
         }
@@ -508,9 +533,9 @@ private fun DonutChart(
             animationSpec  = tween(200, easing = EmphasizedDecelerate),
             label          = "donut-label-alpha",
         )
-        val shownIdx = highlightedIdx  // snapshot so content doesn't flicker on hide
-        if (shownIdx != null && shownIdx < modeSummaries.size) {
-            val s = modeSummaries[shownIdx]
+        val shownIdx = highlightedIdx
+        if (shownIdx != null && shownIdx < visibleSummaries.size) {
+            val s = visibleSummaries[shownIdx]
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier            = Modifier
@@ -662,9 +687,10 @@ private fun StackedBarChart(
                                 .fillMaxWidth()
                                 .height(BAR_CHART_HEIGHT),
                         ) {
-                            val barW   = size.width * 0.65f
-                            val barX   = (size.width - barW) / 2f
+                            val barW     = size.width * 0.65f
+                            val barX     = (size.width - barW) / 2f
                             val progress = animProgress.value
+                            val cornerPx = 3.dp.toPx()
 
                             // Background guide lines at each tick
                             val tickCount = (yMax / tickMs).toInt()
@@ -675,38 +701,50 @@ private fun StackedBarChart(
                                     Offset(0f, gy), Offset(size.width, gy), 0.5.dp.toPx())
                             }
 
-                            // Segments (bottom to top, sorted by modeId for visual stability)
-                            var accum = 0L
-                            day.durationsMs.entries
-                                .sortedBy { it.key }
-                                .forEach { (modeId, ms) ->
-                                    val modeColor = modeMap[modeId]?.colorHex?.let {
-                                        runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull()
-                                    } ?: Color.Gray
+                            // Subtle rounded track for the empty part of the bar
+                            drawRoundRect(
+                                color        = outline.copy(alpha = 0.12f),
+                                topLeft      = Offset(barX, 0f),
+                                size         = Size(barW, barHeightPx),
+                                cornerRadius = CornerRadius(cornerPx),
+                            )
 
-                                    val normBottom = (accum.toFloat() / yMax)     * progress
-                                    val normTop    = ((accum + ms).toFloat() / yMax) * progress
-                                    val segBottom  = barHeightPx * (1f - normBottom)
-                                    val segTop     = barHeightPx * (1f - normTop)
+                            // Segments drawn inside a rounded-corner clip so all
+                            // four bar corners are rounded with a single clip pass.
+                            val totalFrac = (day.totalMs.toFloat() / yMax * progress).coerceIn(0f, 1f)
+                            val totalTopY = barHeightPx * (1f - totalFrac)
 
-                                    drawRect(
-                                        color   = modeColor,
-                                        topLeft = Offset(barX, segTop),
-                                        size    = Size(barW, (segBottom - segTop).coerceAtLeast(0f)),
+                            clipPath(Path().apply {
+                                addRoundRect(
+                                    RoundRect(
+                                        rect        = Rect(barX, totalTopY, barX + barW, barHeightPx),
+                                        topLeft     = CornerRadius(cornerPx),
+                                        topRight    = CornerRadius(cornerPx),
+                                        bottomLeft  = CornerRadius(cornerPx),
+                                        bottomRight = CornerRadius(cornerPx),
                                     )
-                                    accum += ms
-                                }
-
-                            // Selection outline
-                            if (isSelected) {
-                                val totalFrac = (day.totalMs.toFloat() / yMax * progress).coerceIn(0f, 1f)
-                                val totalTopY = barHeightPx * (1f - totalFrac)
-                                drawRect(
-                                    color       = onSurface.copy(alpha = 0.7f),
-                                    topLeft     = Offset(barX, totalTopY),
-                                    size        = Size(barW, (barHeightPx - totalTopY).coerceAtLeast(0f)),
-                                    style       = Stroke(width = 1.5.dp.toPx()),
                                 )
+                            }) {
+                                var accum = 0L
+                                day.durationsMs.entries
+                                    .sortedBy { it.key }
+                                    .forEach { (modeId, ms) ->
+                                        val modeColor = modeMap[modeId]?.colorHex?.let {
+                                            runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull()
+                                        } ?: Color.Gray
+
+                                        val normBottom = (accum.toFloat() / yMax)        * progress
+                                        val normTop    = ((accum + ms).toFloat() / yMax)  * progress
+                                        val segBottom  = barHeightPx * (1f - normBottom)
+                                        val segTop     = barHeightPx * (1f - normTop)
+
+                                        drawRect(
+                                            color   = modeColor,
+                                            topLeft = Offset(barX, segTop),
+                                            size    = Size(barW, (segBottom - segTop).coerceAtLeast(0f)),
+                                        )
+                                        accum += ms
+                                    }
                             }
                         }
 
@@ -811,14 +849,22 @@ private fun SectionCard(
     title  : String,
     content: @Composable () -> Unit,
 ) {
-    Column {
-        Text(
-            text       = title,
-            style      = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(8.dp))
-        content()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape    = MaterialTheme.shapes.extraLarge,
+        colors   = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Text(
+                text       = title,
+                style      = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(12.dp))
+            content()
+        }
     }
 }
 
@@ -858,16 +904,15 @@ private fun LegendRow(
 
 // ── Duration formatting helpers ───────────────────────────────────────────────
 
-/** Returns e.g. "2h 04m" or "45m" or "30s". */
+/** Returns e.g. "2h 04m", "45m", or "<1m" — never shows raw seconds. */
 private fun formatDuration(ms: Long): String {
     if (ms <= 0L) return "0m"
     val h = ms / 3_600_000L
     val m = (ms % 3_600_000L) / 60_000L
-    val s = (ms % 60_000L) / 1_000L
     return when {
         h > 0  -> "%dh %02dm".format(h, m)
         m > 0  -> "%dm".format(m)
-        else   -> "%ds".format(s)
+        else   -> "<1m"
     }
 }
 

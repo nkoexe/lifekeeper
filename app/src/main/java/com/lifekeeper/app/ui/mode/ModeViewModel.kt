@@ -94,12 +94,14 @@ class ModeViewModel(
     init {
         viewModelScope.launch { modeRepo.seedDefaultsIfEmpty() }
 
-        // Tick every second while an entry is active to keep todayDurationsMs live.
+        // Tick every 30 s while an entry is active to keep todayDurationsMs and
+        // the MiniDayStrip now-indicator live. 30 s is sufficient since nothing
+        // in the UI shows seconds anymore.
         viewModelScope.launch {
             timeRepo.getActiveEntryFlow().collectLatest { activeEntry ->
                 if (activeEntry == null) return@collectLatest
                 while (true) {
-                    delay(1_000)
+                    delay(30_000)
                     _tick.update { it + 1 }
                 }
             }

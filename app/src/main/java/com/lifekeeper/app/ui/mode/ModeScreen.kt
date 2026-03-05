@@ -234,9 +234,14 @@ private fun ModeList(
         if (targetIdx != centerModeIdx) listState.animateScrollToItem(targetIdx)
     }
 
-    // Debounced mode switch — fires 400 ms after scrolling settles.
-    LaunchedEffect(centerModeIdx) {
-        delay(400)
+    // True while at least one finger is touching the list.
+    var isDragging by remember { mutableStateOf(false) }
+
+    // Mode switch — triggered only once the finger is lifted, after a short
+    // pause to let the snap fling settle on its final item.
+    LaunchedEffect(isDragging, centerModeIdx) {
+        if (isDragging) return@LaunchedEffect
+        delay(300)
         viewModel.switchMode(modes[centerModeIdx].id)
     }
 
@@ -246,23 +251,29 @@ private fun ModeList(
         val aimLineBottom = viewportHeight / 2 + ITEM_HEIGHT / 2
         val density = LocalDensity.current
 
-        val activeModeColor by remember {
+        // Always track the item currently in the crosshairs, not the DB-committed
+        // activeModeId. This means finger-up animates transparent → new color in a
+        // single hop — no intermediate flash of the old committed color.
+        val centerModeColor by remember {
             derivedStateOf {
-                val id = viewModel.activeModeId
-                val mode = if (id != null) modes.find { it.id == id }
-                           else modes.getOrNull(centerModeIdx)
-                mode?.colorHex?.let {
+                modes.getOrNull(centerModeIdx)?.colorHex?.let {
                     runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull()
                 } ?: Color.Transparent
             }
         }
 
+        // Band clears only while the finger is actively touching AND the list is
+        // moving (not on a stationary tap, not during a free fling after release).
+        // The moment the finger lifts the band refills immediately, even mid-fling.
         val aimBandColor by animateColorAsState(
-            targetValue = activeModeColor.copy(alpha = 0.20f),
-            label = "aim_band",
+            targetValue   = if (isDragging && listState.isScrollInProgress) Color.Transparent
+                            else centerModeColor.copy(alpha = 0.18f),
+            animationSpec = tween(durationMillis = 500),
+            label         = "aim_band",
         )
 
-        val aimLineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
+        // M3 semantic token for lines/borders — adapts to light/dark automatically.
+        val aimLineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
 
         // Colored band behind the list — highlights the selection zone.
         Box(
@@ -276,7 +287,21 @@ private fun ModeList(
         LazyColumn(
             state          = listState,
             flingBehavior  = snapFling,
-            modifier       = Modifier.fillMaxSize(),
+            modifier       = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    // Track finger contact independently of gestures consumed by
+                    // the scroll/fling system — requireUnconsumed = false lets us
+                    // observe the raw down/up without stealing events.
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        isDragging = true
+                        do {
+                            val event = awaitPointerEvent()
+                        } while (event.changes.any { it.pressed })
+                        isDragging = false
+                    }
+                },
             contentPadding = PaddingValues(
                 top    = viewportHeight / 2 - ITEM_HEIGHT / 2,
                 bottom = viewportHeight / 2 - ITEM_HEIGHT / 2,
@@ -352,9 +377,10 @@ private fun ModeItem(
         label         = "item_text",
     )
 
-    // Used modes get the standard secondary text color; unused fade to disabled.
+    // Modes with at least 1 minute tracked get the standard secondary text color;
+    // anything shorter (including unused) fades to disabled — sub-minute is hidden.
     val durationTextColor by animateColorAsState(
-        targetValue = if (durationMs > 0L)
+        targetValue = if (durationMs >= 60_000L)
             MaterialTheme.colorScheme.onSurfaceVariant
         else
             MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f),
@@ -519,8 +545,10 @@ private fun MiniDayStrip(
     val labelPaint = remember { android.graphics.Paint() }
     val hintPaint  = remember { android.graphics.Paint() }
 
-    // Hint text resolved in composable scope — depends only on nowMs, not DrawScope.
-    val hint = miniStripHint(nowMs)
+    // Hint text is picked once when the composable enters composition (app launch /
+    // navigation) and never re-rolled on subsequent ticks. nowMs provides the
+    // correct hour for slot selection at that moment.
+    val hint = remember { miniStripHint(nowMs) }
 
     Canvas(
         modifier = modifier
@@ -741,32 +769,65 @@ private fun MiniDayStrip(
     }
 }
 
-/** Formats a millisecond duration as a compact string — mirrors the widget format. */
+/**
+ * Formats a millisecond duration as a compact string.
+ * Returns "—" for zero or sub-minute durations so the counter is
+ * visually hidden until at least 1 minute has been tracked.
+ */
 private fun formatDuration(ms: Long): String {
     if (ms <= 0L) return "—"
     val totalMin = ms / 60_000L
-    if (totalMin == 0L) return "<1m"
+    if (totalMin == 0L) return "—"
     val hours = totalMin / 60L
     val mins  = totalMin % 60L
     return if (hours > 0L) "${hours}h ${mins}m" else "${mins}m"
 }
 
 /**
- * Returns an idle hint string for the MiniDayStrip based on the current hour,
- * or null to hide the hint entirely.
- *
- * Each slot holds a list so a random entry can be chosen in the future;
- * for now the first element is always used.
+ * Returns a hint string for the MiniDayStrip based on the current hour, or null
+ * to hide the hint entirely. One entry is picked at random from each slot so the
+ * label varies across sessions.
  */
 private fun miniStripHint(nowMs: Long): String? {
     val cal = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }
     val h   = cal.get(java.util.Calendar.HOUR_OF_DAY)
-    val candidates: List<String>? = when {
-        h  < 2  -> listOf("the day is over, goodnight!")
-        h  < 9  -> listOf("have a good day!")
-        h  < 13 -> listOf("you still got the whole day ahead of you!")
-        h  < 16 -> listOf("lots of time left")
-        else    -> null
+    val candidates: List<String> = when {
+        h < 3  -> listOf(
+            "The day is over. Sleep well.",
+            "Remember the sleep mode!",
+            "Goodnight!",
+        )
+        h < 6  -> listOf(
+            "Most of the world is still asleep.",
+            "Good morning, early bird!",
+            "A head start on the day!",
+        )
+        h < 10 -> listOf(
+            "Have a great day!",
+            "Good morning! Make the day count.",
+            "Fresh start, good morning!",
+        )
+        h < 13 -> listOf(
+            "So much time still ahead of you!",
+            "Plenty of time to start something!",
+            "Still a lot of time, what to do?",
+        )
+        h < 17 -> listOf(
+            "Afternoon in progress...",
+            "Good afternoon! Keep it up.",
+            "Keep it up!",
+        )
+        h < 21 -> listOf(
+            "Have a good evening!",
+            "Have a lovely evening!",
+            "How did today go?",
+            "Almost done for today!",
+        )
+        else   -> listOf(
+            "Remember sleep mode!",
+            "Almost time to rest.",
+            "Goodnight!",
+        )
     }
-    return candidates?.firstOrNull()
+    return candidates.random()
 }

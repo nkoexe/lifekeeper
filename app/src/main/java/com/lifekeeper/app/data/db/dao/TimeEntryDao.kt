@@ -17,6 +17,24 @@ interface TimeEntryDao {
     @Query("UPDATE time_entries SET endEpochMs = :endMs WHERE id = :id")
     suspend fun closeEntry(id: Long, endMs: Long)
 
+    /**
+     * Sets endEpochMs to an arbitrary value (including null to reopen an entry).
+     * Used during short-entry cleanup in [TimeRepository.switchMode].
+     */
+    @Query("UPDATE time_entries SET endEpochMs = :endMs WHERE id = :id")
+    suspend fun updateEndTime(id: Long, endMs: Long?)
+
+    /** Deletes a single entry by id — used to remove entries that are below the minimum duration. */
+    @Query("DELETE FROM time_entries WHERE id = :id")
+    suspend fun deleteEntry(id: Long)
+
+    /**
+     * Returns the most recent closed entry (endEpochMs IS NOT NULL), or null if none exists.
+     * Used to find the direct predecessor of a short entry so its time can be reclaimed.
+     */
+    @Query("SELECT * FROM time_entries WHERE endEpochMs IS NOT NULL ORDER BY startEpochMs DESC LIMIT 1")
+    suspend fun getLastClosedEntry(): TimeEntry?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entry: TimeEntry): Long
 

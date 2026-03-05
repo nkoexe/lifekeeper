@@ -111,11 +111,12 @@ class StatsViewModel(
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
-        // Keep the live entry duration ticking.
+        // Keep the live entry duration ticking every 30 s. This is sufficient
+        // since nothing in the stats UI shows seconds anymore.
         viewModelScope.launch {
             timeRepo.getActiveEntryFlow().collectLatest { active ->
                 if (active == null) return@collectLatest
-                while (true) { delay(1_000); _tick.update { it + 1 } }
+                while (true) { delay(30_000); _tick.update { it + 1 } }
             }
         }
 

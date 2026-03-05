@@ -33,14 +33,15 @@ class SummaryViewModel(
     private val _tick = MutableStateFlow(0L)
 
     init {
-        // Tick every second, but only while there is an open (active) entry.
+        // Tick every 30 s while there is an open (active) entry to keep durations
+        // live. 30 s is sufficient since nothing in the UI shows seconds anymore.
         // collectLatest cancels the inner while-loop as soon as the active entry
         // changes, so we never waste CPU ticking when everything is idle.
         viewModelScope.launch {
             timeRepo.getActiveEntryFlow().collectLatest { activeEntry ->
                 if (activeEntry == null) return@collectLatest
                 while (true) {
-                    delay(1_000)
+                    delay(30_000)
                     _tick.update { it + 1 }
                 }
             }

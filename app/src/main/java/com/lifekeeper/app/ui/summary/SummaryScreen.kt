@@ -184,11 +184,12 @@ private fun ModeSummaryCard(summary: ModeSummary) {
 }
 
 private fun formatDuration(ms: Long): String {
+    if (ms <= 0L) return "—"
     val hours   = TimeUnit.MILLISECONDS.toHours(ms)
     val minutes = TimeUnit.MILLISECONDS.toMinutes(ms) % 60
-    val seconds = TimeUnit.MILLISECONDS.toSeconds(ms) % 60
     return when {
         hours > 0 -> "%dh %02dm".format(hours, minutes)
-        else      -> "%02d:%02d".format(minutes, seconds)
+        minutes > 0 -> "%dm".format(minutes)
+        else      -> "—"
     }
 }

@@ -67,17 +67,61 @@ class TimeRepository(private val db: LifekeeperDatabase) {
     // ── Switch ────────────────────────────────────────────────────────────────
 
     /**
+     * Minimum duration (ms) for a time entry to be considered meaningful.
+     * Entries shorter than this are treated as accidental taps and removed
+     * retroactively when the next switch occurs.
+     */
+    private val MIN_ENTRY_DURATION_MS = 60_000L   // 1 minute
+
+    /**
      * Switch tracking to [modeId].
-     * Wraps both writes in a real Room transaction via [withTransaction] so
-     * Room's InvalidationTracker fires exactly once (no transient null flash)
-     * and the connection pool is managed correctly even with active Flows.
+     *
+     * If the currently active entry is shorter than [MIN_ENTRY_DURATION_MS]
+     * it is considered accidental and removed retroactively:
+     * - The preceding closed entry (direct predecessor) is extended to [now],
+     *   reclaiming the short entry's time for the previous mode.
+     * - If the user is switching back to the same mode as the predecessor,
+     *   that entry is simply reopened (its endEpochMs is cleared), avoiding
+     *   a duplicate entry.
+     * - If there is no predecessor (the short entry was the very first one
+     *   of the day), it is deleted outright and a fresh entry starts now.
+     *
+     * All writes are wrapped in a single Room transaction so Flows fire once.
      */
     suspend fun switchMode(modeId: Long) {
         val now    = System.currentTimeMillis()
         val active = dao.getActiveEntry()
         if (active?.modeId == modeId) return
         db.withTransaction {
-            if (active != null) dao.closeEntry(active.id, now)
+            if (active != null) {
+                val duration = now - active.startEpochMs
+                if (duration < MIN_ENTRY_DURATION_MS) {
+                    // Short entry — remove it and reclaim its time.
+                    dao.deleteEntry(active.id)
+
+                    // Find the direct predecessor (must chain exactly to this entry).
+                    val prev = dao.getLastClosedEntry()
+                    if (prev != null && prev.endEpochMs == active.startEpochMs) {
+                        when (prev.modeId) {
+                            modeId -> {
+                                // Switching back to the same mode the user was in before
+                                // the accidental tap — reopen that entry seamlessly.
+                                dao.updateEndTime(prev.id, null)
+                                return@withTransaction  // no new insert needed
+                            }
+                            else -> {
+                                // Different mode — extend predecessor to now so it
+                                // reclaims the short entry's time.
+                                dao.updateEndTime(prev.id, now)
+                            }
+                        }
+                    }
+                    // No valid predecessor (first entry of day, or chain broken):
+                    // just start fresh with the new mode below.
+                } else {
+                    dao.closeEntry(active.id, now)
+                }
+            }
             dao.insert(TimeEntry(modeId = modeId, startEpochMs = now))
         }
     }
