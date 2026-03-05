@@ -3,7 +3,6 @@ package com.lifekeeper.app.ui.navigation
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,6 +15,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,13 +33,15 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.lifekeeper.app.ui.calendar.DayScreen
 import com.lifekeeper.app.ui.edit.EditModesScreen
 import com.lifekeeper.app.ui.mode.ModeScreen
-import com.lifekeeper.app.ui.summary.SummaryScreen
+import com.lifekeeper.app.ui.stats.StatsScreen
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 object Routes {
     const val MODES      = "modes"
+    const val CALENDAR   = "calendar"
     const val SUMMARY    = "summary"
     const val EDIT_MODES = "edit_modes"
 }
@@ -52,42 +54,58 @@ private data class TopLevelTab(
 )
 
 private val TOP_LEVEL_TABS = listOf(
-    TopLevelTab(Routes.MODES,   "Modes",   Icons.Outlined.Home),
-    TopLevelTab(Routes.SUMMARY, "Summary", Icons.Outlined.BarChart),
+    TopLevelTab(Routes.MODES,    "Modes",    Icons.Outlined.Home),
+    TopLevelTab(Routes.CALENDAR, "Calendar", Icons.Outlined.CalendarToday),
+    TopLevelTab(Routes.SUMMARY,  "Stats",    Icons.Outlined.BarChart),
 )
 
 // O(1) lookup — is the given route a bottom-nav tab?
 private val TAB_ROUTES = TOP_LEVEL_TABS.map { it.route }.toHashSet()
 
 // ── Transition constants ──────────────────────────────────────────────────────
-// M3 fade-through: exit is intentionally short so the screen clears before the
-// new one arrives — asymmetric by design.
-private const val TAB_EXIT_DURATION  = 90
-private const val TAB_ENTER_DURATION = 220
+// Tab slide duration — shared for enter and exit so both screens travel together.
+private const val TAB_DURATION  = 250
 
 // Standard push/pop durations.
 private const val PUSH_DURATION = 300
 private const val POP_DURATION  = 250
 
 // ── Transition helpers ────────────────────────────────────────────────────────
+// Tab order drives slide direction: higher index → slide from the right.
+private val TAB_ORDER = mapOf(
+    Routes.MODES    to 0,
+    Routes.CALENDAR to 1,
+    Routes.SUMMARY  to 2,
+)
+
 private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTabSwitch() =
     initialState.destination.route in TAB_ROUTES &&
     targetState.destination.route  in TAB_ROUTES
 
-// NavHost-level defaults — tab switches use M3 fade-through; push uses slide+fade.
+// +1 → navigating to a higher-index tab (right); -1 → lower-index tab (left).
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.tabDirection(): Int {
+    val from = TAB_ORDER[initialState.destination.route] ?: return 0
+    val to   = TAB_ORDER[targetState.destination.route]  ?: return 0
+    return if (to > from) 1 else -1
+}
+
+// NavHost-level defaults — tab switches use directional slide+fade;
+// push uses the same slide+fade biased rightward (deeper = right).
 private val defaultEnterTransition:
     AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-    if (isTabSwitch())
-        fadeIn(tween(TAB_ENTER_DURATION, easing = LinearEasing))
-    else
+    if (isTabSwitch()) {
+        val dir = tabDirection()
+        slideInHorizontally(tween(TAB_DURATION)) { dir * it / 6 } + fadeIn(tween(TAB_DURATION))
+    } else
         slideInHorizontally(tween(PUSH_DURATION)) { it / 6 } + fadeIn(tween(PUSH_DURATION))
 }
 
 private val defaultExitTransition:
     AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-    if (isTabSwitch())
-        fadeOut(tween(TAB_EXIT_DURATION, easing = LinearEasing))
-    else
+    if (isTabSwitch()) {
+        val dir = tabDirection()
+        slideOutHorizontally(tween(TAB_DURATION)) { -dir * it / 6 } + fadeOut(tween(TAB_DURATION))
+    } else
         slideOutHorizontally(tween(POP_DURATION)) { -it / 6 } + fadeOut(tween(POP_DURATION))
 }
 
@@ -172,10 +190,24 @@ fun NavGraph() {
         ) {
             // ── Tab destinations ───────────────────────────────────────────
             composable(Routes.MODES) {
-                ModeScreen(onOpenEditModes = { navController.navigate(Routes.EDIT_MODES) })
+                ModeScreen(
+                    onOpenEditModes = { navController.navigate(Routes.EDIT_MODES) },
+                    onCalendarClick = {
+                        navController.navigate(Routes.CALENDAR) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState    = true
+                        }
+                    },
+                )
+            }
+            composable(Routes.CALENDAR) {
+                DayScreen()
             }
             composable(Routes.SUMMARY) {
-                SummaryScreen()
+                StatsScreen()
             }
 
             // ── Push destination (no bottom bar) ──────────────────────────

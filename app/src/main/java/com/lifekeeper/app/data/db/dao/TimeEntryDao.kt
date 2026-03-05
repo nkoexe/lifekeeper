@@ -25,4 +25,26 @@ interface TimeEntryDao {
 
     @Query("SELECT * FROM time_entries WHERE startEpochMs >= :startMs ORDER BY startEpochMs ASC")
     suspend fun getEntriesSinceSnapshot(startMs: Long): List<TimeEntry>
+
+    /**
+     * Returns all entries whose interval overlaps the [startMs]..[endMs] window.
+     * An entry overlaps when its start is before the window closes AND its end
+     * (or "now" if still open) is after the window opens.
+     */
+    @Query("""
+        SELECT * FROM time_entries
+        WHERE startEpochMs < :endMs
+          AND (endEpochMs IS NULL OR endEpochMs > :startMs)
+        ORDER BY startEpochMs ASC
+    """)
+    fun getEntriesInRange(startMs: Long, endMs: Long): Flow<List<TimeEntry>>
+
+    /** Suspend snapshot version of [getEntriesInRange] — used in one-shot contexts. */
+    @Query("""
+        SELECT * FROM time_entries
+        WHERE startEpochMs < :endMs
+          AND (endEpochMs IS NULL OR endEpochMs > :startMs)
+        ORDER BY startEpochMs ASC
+    """)
+    suspend fun getEntriesInRangeSnapshot(startMs: Long, endMs: Long): List<TimeEntry>
 }
