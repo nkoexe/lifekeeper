@@ -140,13 +140,36 @@ class DayViewModel(
                     timeRepo.activatePlannedEntry(entry)
                 }
 
+                // If a scheduled-active entry's planned end was just reached and no
+                // planned successor took over, reopen the entry so activity tracking
+                // continues indefinitely ("empty space" case).
+                if (timeRepo.getEffectiveActiveEntry(now) == null) {
+                    timeRepo.extendExpiredEntry(afterMs = lastNowMs, atOrBeforeMs = now)
+                }
+
                 // Advance the clock after DB is settled.
                 _nowMs.update { now }
                 lastNowMs = now
 
-                // Adaptive tick: 1 s when the next planned entry starts within 2 min.
-                val upcoming = timeRepo.getPlannedEntriesSnapshot(now).firstOrNull()
-                val msUntilNext = upcoming?.let { it.startEpochMs - now } ?: Long.MAX_VALUE
+                // Adaptive tick: 1 s when any imminent event is within 2 minutes.
+                //
+                // Events considered:
+                //  • Next planned closed entry starting soon.
+                //  • Current scheduled-active entry expiring soon (user set a future
+                //    end on the active block; scheduler must react when it runs out).
+                //  • A future-deferred open entry whose start is approaching (user
+                //    moved the active block forward in time).  No explicit activation
+                //    needed — getEffectiveActiveEntry handles the handoff naturally —
+                //    but we still want a 1 s tick near the transition for a smooth UI.
+                val upcoming     = timeRepo.getPlannedEntriesSnapshot(now).firstOrNull()
+                val effectActive = timeRepo.getEffectiveActiveEntry(now)
+                val futureOpen   = timeRepo.getFutureOpenEntry(now)
+
+                val msUntilPlanned  = upcoming?.let     { it.startEpochMs - now } ?: Long.MAX_VALUE
+                val msUntilExpiry   = effectActive?.endEpochMs?.let { it - now } ?: Long.MAX_VALUE
+                val msUntilDeferred = futureOpen?.let   { it.startEpochMs - now } ?: Long.MAX_VALUE
+
+                val msUntilNext = minOf(msUntilPlanned, msUntilExpiry, msUntilDeferred)
                 val tickMs = if (msUntilNext <= 2 * 60_000L) 1_000L else 30_000L
                 delay(tickMs)
             }
@@ -288,14 +311,32 @@ class DayViewModel(
                     adjacentStartMs = null,
                     adjacentEndMs   = snap.adjPrevEndMs,
                 )
-                EditType.RESIZE_BOTTOM -> timeRepo.resizeEntry(
-                    entryId         = snap.entryId,
-                    newStartMs      = null,
-                    newEndMs        = snap.prevEndMs,
-                    adjacentId      = snap.adjacentId,
-                    adjacentStartMs = snap.adjPrevStartMs,
-                    adjacentEndMs   = null,
-                )
+                EditType.RESIZE_BOTTOM -> {
+                    if (snap.prevEndMs == null) {
+                        // Entry was open before the resize: restore adjacency then reopen.
+                        // resizeEntry with newEndMs = null leaves the entry's end unchanged;
+                        // we explicitly reopen it afterwards.
+                        if (snap.adjacentId != null) {
+                            timeRepo.resizeEntry(
+                                entryId         = snap.adjacentId,
+                                newStartMs      = snap.adjPrevStartMs,
+                                newEndMs        = null,
+                            )
+                        }
+                        // Re-insert any auto-merged entries first, then reopen.
+                        for (entry in snap.mergedEntries) timeRepo.insertEntry(entry)
+                        timeRepo.reopenEntry(snap.entryId)
+                    } else {
+                        timeRepo.resizeEntry(
+                            entryId         = snap.entryId,
+                            newStartMs      = null,
+                            newEndMs        = snap.prevEndMs,
+                            adjacentId      = snap.adjacentId,
+                            adjacentStartMs = snap.adjPrevStartMs,
+                            adjacentEndMs   = null,
+                        )
+                    }
+                }
                 EditType.MOVE -> timeRepo.moveEntry(
                     entryId           = snap.entryId,
                     startEntryId      = snap.startEntryId,

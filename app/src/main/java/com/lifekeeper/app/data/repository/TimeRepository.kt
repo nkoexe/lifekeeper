@@ -31,6 +31,42 @@ class TimeRepository(
     /** Reactive stream of the currently active entry; emits on every change. */
     fun getActiveEntryFlow(): Flow<TimeEntry?> = dao.getActiveEntryFlow()
 
+    /**
+     * Returns the entry that should be treated as currently active at [nowMs].
+     *
+     * This extends the traditional open-entry (endEpochMs IS NULL) concept to also
+     * include "scheduled-active" entries: entries that started in the past and carry
+     * an explicit future endEpochMs (set when the user drags the bottom handle of the
+     * active block into the future, scheduling a stop time).
+     */
+    suspend fun getEffectiveActiveEntry(nowMs: Long): TimeEntry? =
+        dao.getEffectiveActiveEntry(nowMs)
+
+    /** Reactive stream of the effective active entry. */
+    fun getEffectiveActiveEntryFlow(nowMs: Long): Flow<TimeEntry?> =
+        dao.getEffectiveActiveEntryFlow(nowMs)
+
+    /**
+     * Returns the next future-open entry (startEpochMs > [nowMs], endEpochMs IS NULL),
+     * or null if none.  Used by the scheduler to compute its adaptive tick delay.
+     */
+    suspend fun getFutureOpenEntry(nowMs: Long): TimeEntry? =
+        dao.getFutureOpenEntry(nowMs)
+
+    /** Re-opens an entry by clearing its endEpochMs.  Used by undo of resize-bottom. */
+    suspend fun reopenEntry(id: Long) { dao.reopenEntry(id) }
+
+    /**
+     * Finds the closed entry that ended most recently in the window
+     * ([afterMs], [atOrBeforeMs]], and reopens it so activity tracking continues
+     * indefinitely.  Called by the scheduler when a scheduled-active entry's
+     * planned end is reached and no planned successor takes over.
+     */
+    suspend fun extendExpiredEntry(afterMs: Long, atOrBeforeMs: Long) {
+        val expired = dao.getEntryEndingInRange(afterMs, atOrBeforeMs) ?: return
+        dao.reopenEntry(expired.id)
+    }
+
     // ── Range helpers ─────────────────────────────────────────────────────────
 
     /**
@@ -97,20 +133,29 @@ class TimeRepository(
     suspend fun activatePlannedEntry(entry: TimeEntry) {
         require(entry.endEpochMs != null) { "activatePlannedEntry called with already-open entry" }
         db.withTransaction {
-            val active = dao.getActiveEntry()
-            if (active != null && active.id != entry.id) {
-                // Close the current active entry at the planned entry's start time.
-                dao.closeEntry(active.id, entry.startEpochMs)
+            val activationTime = entry.startEpochMs
+            // Close whatever entry was effectively active at the activation time.
+            // This handles three cases:
+            //  • A traditional open entry (endEpochMs IS NULL, startMs ≤ activationTime)
+            //  • A scheduled-active entry (startMs ≤ activationTime < endMs)
+            //  • A future-open entry that just became due (startMs ≤ activationTime, endMs = null)
+            val effective = dao.getEffectiveActiveEntry(activationTime)
+            if (effective != null && effective.id != entry.id) {
+                // Trim the entry to the activation time (works for open, scheduled, and open-future).
+                dao.closeEntry(effective.id, activationTime)
             }
-            // Reopen the planned entry.
-            dao.reopenEntry(entry.id)
-            // Merge with a same-mode predecessor if exact adjacency was created
-            // (e.g. the active mode was the same as this planned entry's mode —
-            // closing active at entry.startEpochMs makes them touch at gap = 0).
-            mergeAdjacentSameMode(
-                TimeEntry(id = entry.id, modeId = entry.modeId,
-                          startEpochMs = entry.startEpochMs, endEpochMs = null)
-            )
+            // Cancel any deferred-open entry (startMs in the future) to preserve the
+            // invariant that at most one entry has endEpochMs IS NULL at any time.
+            val futureOpen = dao.getFutureOpenEntry(activationTime)
+            if (futureOpen != null && futureOpen.id != entry.id) {
+                dao.deleteEntry(futureOpen.id)
+            }
+            // Keep the planned endEpochMs intact — the entry is now "scheduled-active"
+            // (startEpochMs in the past, endEpochMs in the future).  The scheduler will
+            // detect the expiry and reopen it if no planned successor takes over.
+            // Merge with a same-mode predecessor in case the closed entry lands exactly
+            // adjacent to one (e.g. same mode was running before this planned slot).
+            mergeAdjacentSameMode(entry)
         }
     }
 
@@ -178,9 +223,15 @@ class TimeRepository(
     ): List<TimeEntry> {
         return db.withTransaction {
             if (startEntryId == entryId) {
-                // newEndMs == null means the entry is still open — only shift start.
-                if (newEndMs != null) dao.updateBothTimes(entryId, newStartMs, newEndMs)
-                else dao.updateStartTime(entryId, newStartMs)
+                if (newEndMs != null) {
+                    dao.updateBothTimes(entryId, newStartMs, newEndMs)
+                } else {
+                    // newEndMs == null means "restore to open" — update start AND clear end.
+                    // This correctly handles undo of a move that was originally performed on
+                    // an open entry: the entry must become open again (endEpochMs = null).
+                    dao.updateStartTime(entryId, newStartMs)
+                    dao.updateEndTime(entryId, null)
+                }
             } else {
                 dao.updateStartTime(startEntryId, newStartMs)
                 if (newEndMs != null) dao.updateEndTime(entryId, newEndMs)
@@ -260,10 +311,18 @@ class TimeRepository(
      */
     suspend fun switchMode(modeId: Long) {
         val now    = System.currentTimeMillis()
-        val active = dao.getActiveEntry()
+        // Use effective active so we correctly detect scheduled-active entries
+        // (startMs in past, future endMs) as "currently active".
+        val active = dao.getEffectiveActiveEntry(now)
         if (active?.modeId == modeId) return
         val minDurationMs = minEntryDurationMs()
         db.withTransaction {
+            // Cancel any deferred-open entry (e.g. the user moved the active entry into
+            // the future — this plan is now overridden by the explicit mode switch).
+            val futureOpen = dao.getFutureOpenEntry(now)
+            if (futureOpen != null && futureOpen.id != active?.id) {
+                dao.deleteEntry(futureOpen.id)
+            }
             if (active != null) {
                 val duration = now - active.startEpochMs
                 if (duration < minDurationMs) {
@@ -290,12 +349,14 @@ class TimeRepository(
                     // No valid predecessor (first entry of day, or chain broken):
                     // just start fresh with the new mode below.
                 } else {
+                    // Trim the effective active entry at now.
+                    // Works for open entries (sets endEpochMs = now) and for
+                    // scheduled-active entries (overrides the future endEpochMs).
                     dao.closeEntry(active.id, now)
                 }
             }
             val newId = dao.insert(TimeEntry(modeId = modeId, startEpochMs = now))
-            // Rare edge case: a planned entry of the same mode may end exactly at `now`
-            // (e.g. a back-to-back planned block).  Merge them into one open entry.
+            // Rare edge case: a planned entry of the same mode may end exactly at `now`.
             mergeAdjacentSameMode(
                 TimeEntry(id = newId, modeId = modeId, startEpochMs = now, endEpochMs = null)
             )

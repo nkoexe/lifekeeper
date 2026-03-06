@@ -94,25 +94,26 @@ class ModeViewModel(
     init {
         viewModelScope.launch { modeRepo.seedDefaultsIfEmpty() }
 
-        // Tick every 30 s while an entry is active to keep todayDurationsMs and
-        // the MiniDayStrip now-indicator live. 30 s is sufficient since nothing
-        // in the UI shows seconds anymore.
+        // Tick every 30 s unconditionally to keep todayDurationsMs and the
+        // MiniDayStrip now-indicator live.  The tick also drives activeModeId
+        // re-queries so scheduled-active entries (non-null future end) are
+        // detected even without a null-end entry in the DB.
         viewModelScope.launch {
-            timeRepo.getActiveEntryFlow().collectLatest { activeEntry ->
-                if (activeEntry == null) return@collectLatest
-                while (true) {
-                    delay(30_000)
-                    _tick.update { it + 1 }
-                }
+            while (true) {
+                delay(30_000)
+                _tick.update { it + 1 }
             }
         }
 
-        // This Flow also picks up widget-tap changes made while the app is open.
+        // Re-evaluate the effective active mode on every DB change OR tick.
+        // getEffectiveActiveEntry returns open entries AND scheduled-active
+        // entries (startMs ≤ now < endMs), so the mode badge stays correct when
+        // the user gives the current block a concrete future end.
         viewModelScope.launch {
-            timeRepo.getActiveEntryFlow()
-                .map { it?.modeId }
+            combine(timeRepo.getActiveEntryFlow(), _tick) { _, _ -> Unit }
                 .collectLatest {
-                    activeModeId = it
+                    val now = System.currentTimeMillis()
+                    activeModeId = timeRepo.getEffectiveActiveEntry(now)?.modeId
                     activeModeSeen = true
                 }
         }

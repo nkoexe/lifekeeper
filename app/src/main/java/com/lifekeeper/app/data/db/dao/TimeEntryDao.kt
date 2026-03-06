@@ -124,4 +124,63 @@ interface TimeEntryDao {
      */
     @Query("SELECT * FROM time_entries WHERE modeId = :modeId AND startEpochMs = :startMs LIMIT 1")
     suspend fun findEntryStartingAt(modeId: Long, startMs: Long): TimeEntry?
+
+    /**
+     * Returns the entry that should be treated as "currently active" at [nowMs].
+     *
+     * This covers two cases:
+     *  - A traditional open entry (endEpochMs IS NULL) whose start is at or before [nowMs].
+     *  - A "scheduled-active" entry: started in the past but has an explicit future
+     *    endEpochMs (the user dragged the bottom handle forward to schedule a stop time).
+     *
+     * Ordered by startEpochMs DESC so the most-recently-started entry wins when
+     * multiple candidates exist (e.g. a future-open deferred entry that just became due).
+     */
+    @Query("""
+        SELECT * FROM time_entries
+        WHERE startEpochMs <= :nowMs
+          AND (endEpochMs IS NULL OR endEpochMs > :nowMs)
+        ORDER BY startEpochMs DESC
+        LIMIT 1
+    """)
+    suspend fun getEffectiveActiveEntry(nowMs: Long): TimeEntry?
+
+    /** Reactive version of [getEffectiveActiveEntry]. */
+    @Query("""
+        SELECT * FROM time_entries
+        WHERE startEpochMs <= :nowMs
+          AND (endEpochMs IS NULL OR endEpochMs > :nowMs)
+        ORDER BY startEpochMs DESC
+        LIMIT 1
+    """)
+    fun getEffectiveActiveEntryFlow(nowMs: Long): Flow<TimeEntry?>
+
+    /**
+     * Returns the next open entry whose start lies in the future (startEpochMs > [nowMs]).
+     * This represents a "deferred mode start" — the user moved the active entry
+     * forward in time, planning to resume that mode at [startEpochMs].
+     * Used by the scheduler to refine its adaptive tick interval.
+     */
+    @Query("""
+        SELECT * FROM time_entries
+        WHERE endEpochMs IS NULL AND startEpochMs > :nowMs
+        ORDER BY startEpochMs ASC
+        LIMIT 1
+    """)
+    suspend fun getFutureOpenEntry(nowMs: Long): TimeEntry?
+
+    /**
+     * Returns the most-recently-ended closed entry whose [endEpochMs] falls strictly
+     * after [afterMs] and at or before [atOrBeforeMs].  Used by the scheduler to
+     * detect a scheduled-active entry that just expired so it can be reopened when
+     * no planned successor takes over.
+     */
+    @Query("""
+        SELECT * FROM time_entries
+        WHERE endEpochMs > :afterMs
+          AND endEpochMs <= :atOrBeforeMs
+        ORDER BY endEpochMs DESC
+        LIMIT 1
+    """)
+    suspend fun getEntryEndingInRange(afterMs: Long, atOrBeforeMs: Long): TimeEntry?
 }

@@ -1028,40 +1028,34 @@ private fun DayGrid(
                                             val deltaMs = (dragAccumPx * msPerPxRef.value).toLong()
                                             val minStart = (prevBlk?.let { it.startMs + DELETE_THRESHOLD_MS / 2 }
                                                 ?: dsMs).coerceAtLeast(dsMs)
-                                            if (rb.isOpen) {
-                                                // Open (active) entry: only shift start; end stays virtual.
-                                                val maxStart = nowMsRef.value - MIN_BLOCK_MS
-                                                val newStart = (rb.startMs + deltaMs).coerceIn(minStart, maxOf(minStart, maxStart))
-                                                liveStartMs  = newStart
-                                                liveEndMs    = null
-                                                if (prevBlk != null) {
-                                                    liveAdjIdx = selIdx - 1; liveAdjEndMs = newStart; liveAdjStartMs = null
-                                                }
-                                            } else {
-                                                val duration = rb.endMs - rb.startMs
-                                                val maxEnd   = (nextBlk?.let { it.endMs - DELETE_THRESHOLD_MS / 2 }
-                                                    ?: (dsMs + DayViewModel.DAY_MS))
-                                                    .coerceAtMost(dsMs + DayViewModel.DAY_MS)
-                                                val maxStart = maxEnd - duration
-                                                val newStart = (rb.startMs + deltaMs).coerceIn(minStart, maxOf(minStart, maxStart))
-                                                val newEnd   = newStart + duration
-                                                liveStartMs  = newStart
-                                                liveEndMs    = newEnd
-                                                if (prevBlk != null) {
-                                                    liveAdjIdx = selIdx - 1; liveAdjEndMs = newStart; liveAdjStartMs = null
-                                                    willDeletePrev = (newStart - prevBlk.startMs) < DELETE_THRESHOLD_MS
-                                                }
-                                                if (nextBlk != null) {
-                                                    liveAdj2Idx = selIdx + 1; liveAdj2StartMs = newEnd; liveAdj2EndMs = null
-                                                    willDeleteNext = (nextBlk.endMs - newEnd) < DELETE_THRESHOLD_MS
-                                                }
-                                                // If both approach threshold, prefer whichever is tighter.
-                                                if (willDeletePrev && willDeleteNext) {
-                                                    val prevRemaining = newStart - (prevBlk?.startMs ?: Long.MAX_VALUE)
-                                                    val nextRemaining = (nextBlk?.endMs ?: Long.MAX_VALUE) - newEnd
-                                                    if (prevRemaining <= nextRemaining) willDeleteNext = false
-                                                    else willDeletePrev = false
-                                                }
+                                            // Full-move: preserve duration and shift both ends together.
+                                            // For open (active) entries rb.endMs is the visual end
+                                            // (nowMs or MIN_VISUAL_DURATION floor).  The visual end
+                                            // becomes the literal new endEpochMs after the move;
+                                            // prevEndMs is stored as null in UndoSnapshot so undo
+                                            // can restore the entry to its open state.
+                                            val duration = rb.endMs - rb.startMs
+                                            val maxEnd   = nextBlk?.let { it.endMs - DELETE_THRESHOLD_MS / 2 }
+                                                ?: (dsMs + 30L * DayViewModel.DAY_MS)
+                                            val maxStart = maxEnd - duration
+                                            val newStart = (rb.startMs + deltaMs).coerceIn(minStart, maxOf(minStart, maxStart))
+                                            val newEnd   = newStart + duration
+                                            liveStartMs  = newStart
+                                            liveEndMs    = newEnd
+                                            if (prevBlk != null) {
+                                                liveAdjIdx = selIdx - 1; liveAdjEndMs = newStart; liveAdjStartMs = null
+                                                willDeletePrev = (newStart - prevBlk.startMs) < DELETE_THRESHOLD_MS
+                                            }
+                                            if (nextBlk != null) {
+                                                liveAdj2Idx = selIdx + 1; liveAdj2StartMs = newEnd; liveAdj2EndMs = null
+                                                willDeleteNext = (nextBlk.endMs - newEnd) < DELETE_THRESHOLD_MS
+                                            }
+                                            // If both approach threshold, prefer whichever is tighter.
+                                            if (willDeletePrev && willDeleteNext) {
+                                                val prevRemaining = newStart - (prevBlk?.startMs ?: Long.MAX_VALUE)
+                                                val nextRemaining = (nextBlk?.endMs ?: Long.MAX_VALUE) - newEnd
+                                                if (prevRemaining <= nextRemaining) willDeleteNext = false
+                                                else willDeletePrev = false
                                             }
                                         },
                                         onDragEnd = {
@@ -1070,23 +1064,7 @@ private fun DayGrid(
                                             val nextBlk = nextBlockRef.value
                                             val newStart = liveStartMs
                                             if (newStart != null && newStart != rb.startMs) {
-                                                if (rb.isOpen) {
-                                                    // Open entry — only startMs shifts; endEpochMs stays null.
-                                                    val snap = UndoSnapshot(
-                                                        editType     = EditType.MOVE,
-                                                        label        = "Moved",
-                                                        entryId      = rb.entryId,
-                                                        startEntryId = rb.startEntryId,
-                                                        prevStartMs  = rb.startMs,
-                                                        prevEndMs    = null,
-                                                        adjacentId   = prevBlk?.entryId,
-                                                        adjPrevEndMs = prevBlk?.endMs,
-                                                    )
-                                                    onMove(rb.entryId, rb.startEntryId,
-                                                        newStart, null,
-                                                        prevBlk?.entryId, newStart,
-                                                        null, null, snap)
-                                                } else if (willDeletePrev && prevBlk != null) {
+                                                if (willDeletePrev && prevBlk != null) {
                                                     onDeleteAdjacent(
                                                         rb.entryId, rb.startMs, rb.endMs,
                                                         prevBlk.entryId, false,
@@ -1101,13 +1079,15 @@ private fun DayGrid(
                                                 } else {
                                                     val newEnd = liveEndMs
                                                     if (newEnd != null) {
+                                                        // prevEndMs = null when the entry was open; undo
+                                                        // restores it to open via moveEntry(newEndMs = null).
                                                         val snap = UndoSnapshot(
                                                             editType        = EditType.MOVE,
                                                             label           = "Moved",
                                                             entryId         = rb.entryId,
                                                             startEntryId    = rb.startEntryId,
                                                             prevStartMs     = rb.startMs,
-                                                            prevEndMs       = rb.endMs,
+                                                            prevEndMs       = if (rb.isOpen) null else rb.endMs,
                                                             adjacentId      = prevBlk?.entryId,
                                                             adjPrevEndMs    = prevBlk?.endMs,
                                                             adjacent2Id     = nextBlk?.startEntryId,
@@ -1132,8 +1112,8 @@ private fun DayGrid(
                     }
                 }
 
-                // ── BOTTOM HANDLE ── hidden for open entries (end = live nowMs) and during MOVE ──
-                if (dragMode != DragMode.MOVE && !rawBlock.isOpen) {
+                // ── BOTTOM HANDLE ── visible for all entries except during MOVE ──
+                if (dragMode != DragMode.MOVE) {
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier         = Modifier
@@ -1158,8 +1138,11 @@ private fun DayGrid(
                                         val floor     = rb.startMs + MIN_BLOCK_MS
                                         // Next block can shrink to half of DELETE_THRESHOLD_MS so the trash
                                         // warning is reachable and always has a sliver to render on.
+                                        // For open (active) entries with no next block, allow planning up to
+                                        // 30 days into the future from the day start.
                                         val ceiling   = nextBlk?.let { it.endMs - DELETE_THRESHOLD_MS / 2 }
-                                            ?: (dsMs + DayViewModel.DAY_MS)
+                                            ?: if (rb.isOpen) (dsMs + 30L * DayViewModel.DAY_MS)
+                                               else (dsMs + DayViewModel.DAY_MS)
                                         // maxOf guards against degenerate range when blocks are very close.
                                         val clamped   = candidate.coerceIn(floor, maxOf(floor, ceiling))
                                         liveEndMs = clamped
@@ -1181,13 +1164,15 @@ private fun DayGrid(
                                                 nextBlk.startMs, nextBlk.endMs, nextBlk.modeId,
                                             )
                                         } else if (newEnd != null && newEnd != rb.endMs) {
+                                            // prevEndMs = null when the entry was open so undo can
+                                            // restore it to its open state (resizeEntry + reopenEntry).
                                             val snap = UndoSnapshot(
                                                 editType       = EditType.RESIZE_BOTTOM,
                                                 label          = "Resized",
                                                 entryId        = rb.entryId,
                                                 startEntryId   = rb.startEntryId,
                                                 prevStartMs    = rb.startMs,
-                                                prevEndMs      = rb.endMs,
+                                                prevEndMs      = if (rb.isOpen) null else rb.endMs,
                                                 adjacentId     = nextBlk?.entryId,
                                                 adjPrevStartMs = nextBlk?.startMs,
                                             )
