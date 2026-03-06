@@ -2,6 +2,7 @@ package com.lifekeeper.app
 
 import android.app.Application
 import com.lifekeeper.app.data.db.LifekeeperDatabase
+import com.lifekeeper.app.data.preferences.UserPreferencesRepository
 import com.lifekeeper.app.data.repository.ModeRepository
 import com.lifekeeper.app.data.repository.TimeRepository
 import com.lifekeeper.app.widget.ModeWidgetWorker
@@ -17,7 +18,9 @@ class LifekeeperApp : Application() {
 
     val modeRepository by lazy { ModeRepository(database.modeDao()) }
 
-    val timeRepository by lazy { TimeRepository(database) }
+    val userPreferencesRepository by lazy { UserPreferencesRepository(this) }
+
+    val timeRepository by lazy { TimeRepository(database, userPreferencesRepository) }
 
     /**
      * Long-lived scope tied to the [Application] lifetime for work that must

@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.aboutlibraries)
 }
 
 android {
@@ -50,6 +51,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
 }
@@ -93,4 +95,10 @@ dependencies {
 
     // WorkManager (periodic widget refresh)
     implementation(libs.work.runtime.ktx)
+
+    // DataStore (user preferences)
+    implementation(libs.datastore.preferences)
+
+    // Open-source licenses screen
+    implementation(libs.aboutlibraries.compose.m3)
 }

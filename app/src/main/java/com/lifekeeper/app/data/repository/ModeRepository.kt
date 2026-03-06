@@ -31,4 +31,13 @@ class ModeRepository(private val dao: ModeDao) {
             dao.updateSortOrder(id, index)
         }
     }
+
+    /**
+     * Deletes all modes (cascades to time entries) and re-inserts the four defaults.
+     * Used by Settings → Data → Reset everything.
+     */
+    suspend fun deleteAllAndReseed() {
+        dao.deleteAllModes()
+        seedDefaultsIfEmpty()
+    }
 }

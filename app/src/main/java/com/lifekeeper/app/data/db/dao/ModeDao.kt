@@ -27,4 +27,8 @@ interface ModeDao {
 
     @Query("UPDATE modes SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: Long, sortOrder: Int)
+
+    /** Permanently deletes all modes. Used for Settings → Reset everything (entries cascade). */
+    @Query("DELETE FROM modes")
+    suspend fun deleteAllModes()
 }

@@ -36,14 +36,22 @@ import androidx.navigation.compose.rememberNavController
 import com.lifekeeper.app.ui.calendar.DayScreen
 import com.lifekeeper.app.ui.edit.EditModesScreen
 import com.lifekeeper.app.ui.mode.ModeScreen
+import com.lifekeeper.app.ui.about.AboutScreen
+import com.lifekeeper.app.ui.about.OssLicensesScreen
+import com.lifekeeper.app.ui.about.PrivacyPolicyScreen
+import com.lifekeeper.app.ui.settings.SettingsScreen
 import com.lifekeeper.app.ui.stats.StatsScreen
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 object Routes {
-    const val MODES      = "modes"
-    const val CALENDAR   = "calendar"
-    const val SUMMARY    = "summary"
-    const val EDIT_MODES = "edit_modes"
+    const val MODES          = "modes"
+    const val CALENDAR       = "calendar"
+    const val SUMMARY        = "summary"
+    const val EDIT_MODES     = "edit_modes"
+    const val SETTINGS       = "settings"
+    const val ABOUT          = "about"
+    const val PRIVACY_POLICY = "privacy_policy"
+    const val OSS_LICENSES   = "oss_licenses"
 }
 
 // ── Tab descriptors ───────────────────────────────────────────────────────────
@@ -192,6 +200,7 @@ fun NavGraph() {
             composable(Routes.MODES) {
                 ModeScreen(
                     onOpenEditModes = { navController.navigate(Routes.EDIT_MODES) },
+                    onOpenSettings  = { navController.navigate(Routes.SETTINGS) },
                     onCalendarClick = {
                         navController.navigate(Routes.CALENDAR) {
                             popUpTo(navController.graph.findStartDestination().id) {
@@ -213,6 +222,25 @@ fun NavGraph() {
             // ── Push destination (no bottom bar) ──────────────────────────
             composable(Routes.EDIT_MODES) {
                 EditModesScreen(onBack = { navController.popBackStack() })
+            }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(
+                    onBack  = { navController.popBackStack() },
+                    onAbout = { navController.navigate(Routes.ABOUT) },
+                )
+            }
+            composable(Routes.ABOUT) {
+                AboutScreen(
+                    onBack          = { navController.popBackStack() },
+                    onPrivacyPolicy = { navController.navigate(Routes.PRIVACY_POLICY) },
+                    onLicenses      = { navController.navigate(Routes.OSS_LICENSES) },
+                )
+            }
+            composable(Routes.PRIVACY_POLICY) {
+                PrivacyPolicyScreen(onBack = { navController.popBackStack() })
+            }
+            composable(Routes.OSS_LICENSES) {
+                OssLicensesScreen(onBack = { navController.popBackStack() })
             }
         }
     }

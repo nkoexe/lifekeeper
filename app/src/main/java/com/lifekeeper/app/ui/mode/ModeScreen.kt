@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -95,6 +96,7 @@ private val ITEM_HEIGHT = 108.dp
 @Composable
 fun ModeScreen(
     onOpenEditModes: () -> Unit,
+    onOpenSettings : () -> Unit = {},
     onCalendarClick: () -> Unit = {},
 ) {
     val app = LocalContext.current.applicationContext as LifekeeperApp
@@ -112,6 +114,9 @@ fun ModeScreen(
                     )
                 },
                 actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.cd_settings))
+                    }
                     IconButton(onClick = onOpenEditModes) {
                         Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.cd_edit_modes))
                     }
