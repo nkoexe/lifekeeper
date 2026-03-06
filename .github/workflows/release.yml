@@ -62,17 +62,16 @@ jobs:
         env:
           CI: true
 
-      # Rename to include the version tag for clarity.
       - name: Rename APK
         run: |
           mv app/build/outputs/apk/release/app-release.apk \
-             app/build/outputs/apk/release/lifekeeper-${{ github.ref_name }}.apk
+             app/build/outputs/apk/release/lifekeeper.apk
 
       - name: Upload release APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-${{ github.ref_name }}
-          path: app/build/outputs/apk/release/lifekeeper-${{ github.ref_name }}.apk
+          path: app/build/outputs/apk/release/lifekeeper.apk
           retention-days: 90
           if-no-files-found: error
 
@@ -81,7 +80,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: "Lifekeeper ${{ github.ref_name }}"
-          files: app/build/outputs/apk/release/lifekeeper-${{ github.ref_name }}.apk
+          files: app/build/outputs/apk/release/lifekeeper.apk
           generate_release_notes: true   # auto-generates changelog from merged PRs
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}  # e.g. v1.0.0-beta → pre-release

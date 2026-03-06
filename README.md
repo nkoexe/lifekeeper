@@ -2,7 +2,7 @@
 
 Be mindful of your time.
 
-[![CI](https://github.com/nkoexe/lifekeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/nkoexe/lifekeeper/actions/workflows/ci.yml)
+[Download latest APK](https://github.com/nkoexe/lifekeeper/releases)
 
 ---
 
