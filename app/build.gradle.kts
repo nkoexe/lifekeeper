@@ -12,13 +12,10 @@ android {
 
     defaultConfig {
         applicationId = "com.lifekeeper.app"
-        minSdk = 31
+        minSdk = 29
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
-        ndk {
-            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
-        }
     }
 
     signingConfigs {
