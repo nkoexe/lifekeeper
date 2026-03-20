@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(
+    private val app: LifekeeperApp,
     private val modeRepo: ModeRepository,
     private val timeRepo: TimeRepository,
     private val prefsRepo: UserPreferencesRepository,
@@ -53,6 +54,7 @@ class SettingsViewModel(
             _fillDone.value  = false
             val modeIds = modeRepo.modes.first().map { it.id }
             timeRepo.fillWithRandomData(modeIds)
+            app.scheduleWidgetUpdate()
             _isFilling.value = false
             _fillDone.value  = true
         }
@@ -76,6 +78,7 @@ class SettingsViewModel(
         viewModelScope.launch {
             _isWorking.value = true
             timeRepo.deleteAllEntries()
+            app.scheduleWidgetUpdate()
             _isWorking.value = false
             _workMessage.value = "Tracking history deleted"
         }
@@ -88,6 +91,7 @@ class SettingsViewModel(
             _isWorking.value = true
             modeRepo.deleteAllAndReseed()   // cascade deletes all time_entries too
             prefsRepo.resetAll()
+            app.scheduleWidgetUpdate()
             _isWorking.value = false
             _workMessage.value = "All data reset to defaults"
         }
@@ -97,6 +101,7 @@ class SettingsViewModel(
         fun factory(app: LifekeeperApp): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 SettingsViewModel(
+                    app,
                     app.modeRepository,
                     app.timeRepository,
                     app.userPreferencesRepository,

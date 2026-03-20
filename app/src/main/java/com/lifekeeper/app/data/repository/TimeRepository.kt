@@ -17,13 +17,13 @@ class TimeRepository(
 
     // ── Today helpers ─────────────────────────────────────────────────────────
 
-    /** Flow of all time entries recorded today (since midnight). */
+    /** Flow of all time entries whose interval overlaps today in local time. */
     fun getTodayEntries(): Flow<List<TimeEntry>> =
-        dao.getEntriesSince(todayMidnightMs())
+        dao.getEntriesInRange(todayMidnightMs(), todayEndMs())
 
-    /** Snapshot (suspend) of all time entries recorded today — used by the widget. */
+    /** Snapshot (suspend) of all time entries whose interval overlaps today. */
     suspend fun getTodayEntriesSnapshot(): List<TimeEntry> =
-        dao.getEntriesSinceSnapshot(todayMidnightMs())
+        dao.getEntriesInRangeSnapshot(todayMidnightMs(), todayEndMs())
 
     /** Returns the currently active entry, or null if none. */
     suspend fun getActiveEntry(): TimeEntry? = dao.getActiveEntry()
@@ -381,14 +381,16 @@ class TimeRepository(
         adjIsNext  : Boolean,
         adjStartMs : Long,
         adjEndMs   : Long?,
+        adjWasOpen : Boolean,
     ): List<TimeEntry> {
         return db.withTransaction {
             dao.deleteEntry(adjId)
             if (adjIsNext) {
-                // Absorb next: extend primary end to adjEndMs (or keep open if adj was open)
-                val newEnd = adjEndMs
-                if (newEnd != null) dao.updateEndTime(primaryId, newEnd)
-                // if adjEndMs == null (adj was open) the primary becomes the new open entry
+                if (adjWasOpen) {
+                    dao.updateEndTime(primaryId, null)
+                } else if (adjEndMs != null) {
+                    dao.updateEndTime(primaryId, adjEndMs)
+                }
             } else {
                 // Absorb prev: pull primary start back to adjStartMs
                 dao.updateStartTime(primaryId, adjStartMs)

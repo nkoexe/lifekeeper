@@ -23,6 +23,8 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.lifekeeper.app.data.model.TimeEntry
+import com.lifekeeper.app.data.model.elapsedMsAt
+import com.lifekeeper.app.data.model.isActiveAt
 
 // ── Baseline M3 surface tones (pre-blended, fully opaque) ────────────────────
 //
@@ -100,12 +102,14 @@ internal fun formatDuration(ms: Long): String {
 internal fun computeWidgetTotals(entries: List<TimeEntry>, nowMs: Long): Map<Long, Long> {
     val result = mutableMapOf<Long, Long>()
     for (entry in entries) {
-        val end      = entry.endEpochMs ?: nowMs
-        val duration = (end - entry.startEpochMs).coerceAtLeast(0L)
+        val duration = entry.elapsedMsAt(nowMs)
         result[entry.modeId] = (result[entry.modeId] ?: 0L) + duration
     }
     return result
 }
+
+internal fun findActiveModeId(entries: List<TimeEntry>, nowMs: Long): Long? =
+    entries.lastOrNull { it.isActiveAt(nowMs) }?.modeId
 
 // ── Widget update ─────────────────────────────────────────────────────────────
 

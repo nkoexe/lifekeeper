@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lifekeeper.app.LifekeeperApp
 import com.lifekeeper.app.R
+import com.lifekeeper.app.data.model.elapsedMsAt
 import com.lifekeeper.app.data.model.Mode
 import com.lifekeeper.app.data.model.TimeEntry
 import com.lifekeeper.app.ui.calendar.todayMidnight
@@ -518,7 +519,7 @@ private fun MiniDayStrip(
             val color = runCatching {
                 Color(android.graphics.Color.parseColor(mode.colorHex))
             }.getOrNull() ?: continue
-            val endMs      = entry.endEpochMs ?: nowMs
+            val endMs      = entry.startEpochMs + entry.elapsedMsAt(nowMs)
             val durationMs = endMs - entry.startEpochMs
             val last       = raw.lastOrNull()
             when {

@@ -55,14 +55,14 @@ class ModeWidget : GlanceAppWidget() {
             // Observe all data inside the composition so the widget reacts
             // automatically to any DB change while the session is alive.
             val modes   by app.modeRepository.modes.collectAsState(emptyList())
-            val active  by app.timeRepository.getActiveEntryFlow().collectAsState(null)
             val entries by app.timeRepository.getTodayEntries().collectAsState(emptyList())
             val nowMs   = System.currentTimeMillis()
             val totals  = computeWidgetTotals(entries, nowMs)
+            val activeModeId = findActiveModeId(entries, nowMs)
             WidgetContent(
                 modes        = modes,
                 totals       = totals,
-                activeModeId = active?.modeId,
+                activeModeId = activeModeId,
             )
         }
     }

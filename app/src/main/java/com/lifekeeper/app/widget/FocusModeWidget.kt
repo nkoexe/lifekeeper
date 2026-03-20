@@ -43,12 +43,12 @@ class FocusModeWidget : GlanceAppWidget() {
         val app = context.applicationContext as LifekeeperApp
         provideContent {
             val modes   by app.modeRepository.modes.collectAsState(emptyList())
-            val active  by app.timeRepository.getActiveEntryFlow().collectAsState(null)
             val entries by app.timeRepository.getTodayEntries().collectAsState(emptyList())
             val nowMs   = System.currentTimeMillis()
             val totals  = computeWidgetTotals(entries, nowMs)
+            val activeModeId = findActiveModeId(entries, nowMs)
 
-            val activeMode = modes.find { it.id == active?.modeId } ?: modes.firstOrNull()
+            val activeMode = modes.find { it.id == activeModeId } ?: modes.firstOrNull()
             FocusContent(
                 modeName = activeMode?.name,
                 colorHex = activeMode?.colorHex ?: "#808080",

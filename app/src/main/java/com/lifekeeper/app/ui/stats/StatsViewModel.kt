@@ -10,13 +10,13 @@ import com.lifekeeper.app.data.model.DailySummary
 import com.lifekeeper.app.data.model.Mode
 import com.lifekeeper.app.data.model.ModeSummary
 import com.lifekeeper.app.data.model.TimeEntry
+import com.lifekeeper.app.data.model.elapsedOverlapMs
 import com.lifekeeper.app.data.repository.ModeRepository
 import com.lifekeeper.app.data.repository.TimeRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flatMapLatest
@@ -111,12 +111,11 @@ class StatsViewModel(
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
-        // Keep the live entry duration ticking every 30 s. This is sufficient
-        // since nothing in the stats UI shows seconds anymore.
+        // Keep elapsed totals live for both open and scheduled-active entries.
         viewModelScope.launch {
-            timeRepo.getActiveEntryFlow().collectLatest { active ->
-                if (active == null) return@collectLatest
-                while (true) { delay(30_000); _tick.update { it + 1 } }
+            while (true) {
+                delay(30_000)
+                _tick.update { it + 1 }
             }
         }
 
@@ -178,9 +177,7 @@ class StatsViewModel(
         // Per-mode totals.
         val modeTotals = mutableMapOf<Long, Long>()
         for (entry in entries) {
-            val s  = maxOf(entry.startEpochMs, windowStart)
-            val e  = minOf(entry.endEpochMs ?: now, windowEnd)
-            val ms = (e - s).coerceAtLeast(0L)
+            val ms = entry.elapsedOverlapMs(windowStart, windowEnd, now)
             if (ms > 0L) modeTotals[entry.modeId] = (modeTotals[entry.modeId] ?: 0L) + ms
         }
         val modeSummaries = modeTotals.mapNotNull { (id, ms) ->
@@ -194,9 +191,7 @@ class StatsViewModel(
             val dayEnd       = dayStart + DAY_MS
             val dayDurations = mutableMapOf<Long, Long>()
             for (entry in entries) {
-                val s  = maxOf(entry.startEpochMs, dayStart)
-                val e  = minOf(entry.endEpochMs ?: now, dayEnd)
-                val ms = (e - s).coerceAtLeast(0L)
+                val ms = entry.elapsedOverlapMs(dayStart, dayEnd, now)
                 if (ms > 0L) dayDurations[entry.modeId] = (dayDurations[entry.modeId] ?: 0L) + ms
             }
             DailySummary(dayStart, dayDurations)

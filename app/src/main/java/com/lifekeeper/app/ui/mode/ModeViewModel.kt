@@ -11,6 +11,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.lifekeeper.app.LifekeeperApp
 import com.lifekeeper.app.data.model.Mode
 import com.lifekeeper.app.data.model.TimeEntry
+import com.lifekeeper.app.data.model.elapsedMsAt
 import com.lifekeeper.app.data.repository.ModeRepository
 import com.lifekeeper.app.data.repository.TimeRepository
 import kotlinx.coroutines.delay
@@ -63,9 +64,7 @@ class ModeViewModel(
         entries
             .groupBy { it.modeId }
             .mapValues { (_, modeEntries) ->
-                modeEntries.sumOf { entry ->
-                    ((entry.endEpochMs ?: now) - entry.startEpochMs).coerceAtLeast(0L)
-                }
+                modeEntries.sumOf { entry -> entry.elapsedMsAt(now) }
             }
     }.stateIn(
         scope = viewModelScope,

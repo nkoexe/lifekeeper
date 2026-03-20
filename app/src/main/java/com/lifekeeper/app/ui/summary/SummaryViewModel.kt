@@ -7,13 +7,13 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.lifekeeper.app.LifekeeperApp
 import com.lifekeeper.app.data.model.ModeSummary
+import com.lifekeeper.app.data.model.elapsedMsAt
 import com.lifekeeper.app.data.repository.ModeRepository
 import com.lifekeeper.app.data.repository.TimeRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -33,17 +33,11 @@ class SummaryViewModel(
     private val _tick = MutableStateFlow(0L)
 
     init {
-        // Tick every 30 s while there is an open (active) entry to keep durations
-        // live. 30 s is sufficient since nothing in the UI shows seconds anymore.
-        // collectLatest cancels the inner while-loop as soon as the active entry
-        // changes, so we never waste CPU ticking when everything is idle.
+        // Tick every 30 s so durations stay correct for open and scheduled-active entries.
         viewModelScope.launch {
-            timeRepo.getActiveEntryFlow().collectLatest { activeEntry ->
-                if (activeEntry == null) return@collectLatest
-                while (true) {
-                    delay(30_000)
-                    _tick.update { it + 1 }
-                }
+            while (true) {
+                delay(30_000)
+                _tick.update { it + 1 }
             }
         }
 
@@ -59,9 +53,7 @@ class SummaryViewModel(
                 val grouped = entries.groupBy { it.modeId }
                 grouped.mapNotNull { (modeId, modeEntries) ->
                     val mode = modeMap[modeId] ?: return@mapNotNull null
-                    val total = modeEntries.sumOf { entry ->
-                        ((entry.endEpochMs ?: now) - entry.startEpochMs).coerceAtLeast(0)
-                    }
+                    val total = modeEntries.sumOf { entry -> entry.elapsedMsAt(now) }
                     ModeSummary(
                         modeId   = modeId,
                         modeName = mode.name,

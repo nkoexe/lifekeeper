@@ -94,8 +94,8 @@ class DayViewModel(
 
     // The visible window starts at +/-7 days around today.
     // ensureWindowCovers() grows this range as the user scrolls.
-    private val _windowStartMs = MutableStateFlow(todayStart - 7L * DAY_MS)
-    private val _windowEndMs   = MutableStateFlow(todayStart + 2L * DAY_MS)
+    private val _windowStartMs = MutableStateFlow(dayMidnight(todayStart - 7L * 25L * 3_600_000L))
+    private val _windowEndMs   = MutableStateFlow(dayMidnight(todayStart + 2L * 25L * 3_600_000L))
 
     private val _uiState = MutableStateFlow(
         DayUiState(
@@ -217,9 +217,10 @@ class DayViewModel(
      * 3 days of an edge. The window only ever grows.
      */
     fun ensureWindowCovers(rangeStartMs: Long, rangeEndMs: Long) {
-        val margin = 3L * DAY_MS
-        val neededStart = rangeStartMs - margin
-        val neededEnd   = rangeEndMs   + margin
+        // 3-day margin: advance/retreat by 3×25 h then snap to midnight so we always
+        // land on a true local midnight regardless of DST transitions in the range.
+        val neededStart = dayMidnight(rangeStartMs - 3L * 25L * 3_600_000L)
+        val neededEnd   = dayMidnight(rangeEndMs   + 3L * 25L * 3_600_000L)
         if (neededStart < _windowStartMs.value) _windowStartMs.update { minOf(it, neededStart) }
         if (neededEnd   > _windowEndMs.value)   _windowEndMs.update   { maxOf(it, neededEnd)   }
     }
@@ -229,6 +230,11 @@ class DayViewModel(
     /** Toggles [modeId] in the active filter set. Empty set = show all entries. */
     fun toggleFilter(modeId: Long) {
         _filterModeIds.update { if (modeId in it) it - modeId else it + modeId }
+    }
+
+    /** Clears all active filters, effectively selecting "All". */
+    fun clearAllFilters() {
+        _filterModeIds.update { emptySet() }
     }
 
     // ── Planning ahead ────────────────────────────────────────────────────────
@@ -379,6 +385,7 @@ class DayViewModel(
         adjIsNext       : Boolean,
         adjStartMs     : Long,
         adjEndMs       : Long?,
+        adjWasOpen     : Boolean,
         adjModeId      : Long,
     ) {
         viewModelScope.launch {
@@ -392,6 +399,7 @@ class DayViewModel(
                 adjIsNext  = adjIsNext,
                 adjStartMs = adjStartMs,
                 adjEndMs   = adjEndMs,
+                adjWasOpen = adjWasOpen,
             )
             _pendingUndo.update {
                 UndoSnapshot(
@@ -411,6 +419,8 @@ class DayViewModel(
     // ── Companion ─────────────────────────────────────────────────────────────
 
     companion object {
+        /** Nominal 24-hour duration in ms — do NOT use for iterating local midnights (DST-unsafe).
+         *  Use [nextMidnight] / [dayMidnight] for all calendar day boundary arithmetic. */
         const val DAY_MS = 24L * 60L * 60L * 1_000L
 
         fun factory(app: LifekeeperApp): ViewModelProvider.Factory = viewModelFactory {
@@ -447,3 +457,13 @@ internal fun dayMidnight(epochMs: Long): Long {
     cal.set(Calendar.MILLISECOND, 0)
     return cal.timeInMillis
 }
+
+/**
+ * Returns the epoch-ms of the local midnight that starts the calendar day
+ * immediately after the day containing [epochMs].
+ *
+ * Uses a 25-hour advance + [dayMidnight] snap to correctly cross DST transitions:
+ * adding exactly DAY_MS=86400000 would land 1 hour before midnight on a spring-forward
+ * day and 1 hour after midnight on a fall-back day, either skipping or duplicating a day.
+ */
+internal fun nextMidnight(epochMs: Long): Long = dayMidnight(epochMs + 25L * 3_600_000L)

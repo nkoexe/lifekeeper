@@ -5,6 +5,7 @@ import com.lifekeeper.app.data.db.LifekeeperDatabase
 import com.lifekeeper.app.data.preferences.UserPreferencesRepository
 import com.lifekeeper.app.data.repository.ModeRepository
 import com.lifekeeper.app.data.repository.TimeRepository
+import com.lifekeeper.app.data.timeline.TimelineScheduler
 import com.lifekeeper.app.widget.ModeWidgetWorker
 import com.lifekeeper.app.widget.updateWidgets
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,8 @@ class LifekeeperApp : Application() {
     val userPreferencesRepository by lazy { UserPreferencesRepository(this) }
 
     val timeRepository by lazy { TimeRepository(database, userPreferencesRepository) }
+
+    val timelineScheduler by lazy { TimelineScheduler(this, timeRepository) }
 
     /**
      * Long-lived scope tied to the [Application] lifetime for work that must
@@ -41,5 +44,6 @@ class LifekeeperApp : Application() {
     override fun onCreate() {
         super.onCreate()
         ModeWidgetWorker.schedule(this)
+        timelineScheduler.start(appScope)
     }
 }
